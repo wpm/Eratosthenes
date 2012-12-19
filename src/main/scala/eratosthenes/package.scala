@@ -1,133 +1,116 @@
-
-import collection.immutable.StreamView
-import collection.mutable
 import testing.Benchmark
 
 package object eratosthenes {
+  /**
+   * All the prime numbers.
+   */
+  def primes(): Stream[Int] = {
+    val p = List(2, 3, 5, 7, 11)
+    p.toStream ++ primesRec(wheel2357, Sieve(p))
+  }
+
+  def primesRec(ns: Stream[Int] = Stream.from(2), composites: Sieve = Sieve()): Stream[Int] = {
+    val n = ns.head
+    if (!composites.contains(n))
+      n #:: primesRec(ns.tail, composites + n)
+    else
+      primesRec(ns.tail, composites ! n)
+  }
 
   /**
-   * Sieve of Eratosthenes
-   *
-   * This uses the sieve of Eratosthenes to define an iterator over prime numbers.
-   *
-   * @param wheel wheel to generate candidate primes
-   * @param firstPrime prime number from which to start the iteration
+   * A table of infinite lists of multiples of primes indexed by the smallest multiple.
    */
-  class SieveOfEratosthenes(wheel: Wheel, firstPrime: Int) extends BufferedIterator[Int] {
-    private val composites = mutable.PriorityQueue[PrimeMultiples]()
-
-    def head = wheel.head
-
-    def hasNext = true
-
-    def next() = {
-      val p = head
-      composites.enqueue(PrimeMultiples(p))
-      wheel.next()
-      while (composites.head.head <= head) {
-        while (composites.head.head <= head) composites.enqueue(composites.dequeue().advance)
-        wheel.next()
-      }
-      p
-    }
-
-    override def toString() = head + ": " +
-      composites.toList.sorted.reverse.mkString("[", ", ", "]")
+  class Sieve private(val m: Map[Int, List[PrimeMultiples]] = Map()) {
+    def contains(n: Int): Boolean = m.contains(n)
 
     /**
-     * Iterator over a list of multiples of a prime number
+     * Add multiples of a prime
      *
-     * @param prime the prime number
-     * @param multiples stream of multiples
+     * @param p the prime to add
+     * @return a sieve with the prime's multiples added
      */
-    class PrimeMultiples private(prime: Int, multiples: StreamView[Int, Stream[Int]]) extends Ordered[PrimeMultiples] {
-      override def toString = prime + ": " + (0 to 2).map(multiples.head + _ * prime).mkString(",") + "..."
+    def +(implicit p: PrimeMultiples) = new Sieve(addToSieve(m, p))
 
-      val head = multiples.head
+    /**
+     * Advance multiples lists
+     *
+     * @param n the composite
+     * @return a sieve will all the lists with n as the smallest multiple shifted by one
+     */
+    def !(n: Int): Sieve = new Sieve(((m - n) /: m(n)) {
+      (a, b) => addToSieve(a, b.tail)
+    })
 
-      def advance: PrimeMultiples = new PrimeMultiples(prime, multiples.tail)
-
-      def compare(that: PrimeMultiples) = that.head.compare(head)
+    private def addToSieve(m: Map[Int, List[PrimeMultiples]], multiples: PrimeMultiples) = {
+      val min = multiples.head
+      m + (min -> (multiples :: m.getOrElse(min, Nil)))
     }
 
-    object PrimeMultiples {
-      def apply(p: Int): PrimeMultiples = new PrimeMultiples(p, Stream.from(p * p, p).view)
-    }
+    override def toString = m.keys.toSeq.sorted.map(k => k + ":" + m(k).mkString("(", ",", ")")).mkString(", ")
+  }
 
+  object Sieve {
+    def apply() = new Sieve()
+
+    def apply(ps: Traversable[Int]): Sieve = (Sieve() /: ps)(_ + _)
   }
 
   /**
-   * Iterator over integers larger than some integer, skipping multiples of a set of smaller integers
+   * An infinite list of the multiples of a prime number starting at its square
+   */
+  class PrimeMultiples private(p: Int, multiples: Stream[Int]) {
+    def head: Int = multiples.head
+
+    def tail: PrimeMultiples = new PrimeMultiples(p, multiples.tail)
+
+    override def toString = "%d: %s...".format(p, multiples.take(3).mkString(","))
+  }
+
+  object PrimeMultiples {
+    /**
+     * @param p the prime
+     * @return the multiples of the prime starting at p*p
+     */
+    def apply(p: Int) = new PrimeMultiples(p, Stream.from(p * p, p))
+
+    implicit def primeToMultiples(p: Int): PrimeMultiples = PrimeMultiples(p)
+  }
+
+  /**
+   * Integers larger than a start value, skipping multiples of a set of integers smaller than the start value.
    *
-   * @param start the starting integer
+   * @param start the starting value
    * @param steps list of step sizes to cycle through
+   * @return stream of integers
    */
-  class Wheel(start: Int, steps: Int*) extends BufferedIterator[Int] {
-    private var n = start
-    private var cycle = Vector(steps: _*)
-
-    override def toString() = start + ": " + head + "..."
-
-    def hasNext = true
-
-    def next() = {
-      val m = n
-      n += cycle.head
-      cycle = cycle.tail :+ cycle.head
-      m
+  def wheel(start: Int, steps: Traversable[Int]): Stream[Int] = {
+    def wheelRec(n: Int, cycle: Stream[Int]): Stream[Int] = {
+      val m = n + cycle.head
+      m #:: wheelRec(m, cycle.tail)
     }
-
-    def head = n
-  }
-
-  object Wheel {
-    implicit def apply(start: Int, steps: Int*) = new Wheel(start, steps: _*)
-
-    /**
-     * All integers >=3, skipping multiples of 2
-     */
-    def wheel2 = Wheel(3, 2)
-
-    /**
-     * All integers >=5, skipping multiples of 2 and 3
-     */
-    def wheel23 = Wheel(5, 2, 4)
-
-    /**
-     * All integers >=11, skipping multiples of 2, 3, 5, and 7
-     */
-    def wheel2357 = Wheel(11, 2, 4, 2, 4, 6, 2, 6, 4, 2, 4, 6, 6, 2, 6, 4, 2, 6, 4, 6, 8, 4, 2, 4, 2, 4, 8, 6, 4, 6,
-      2, 4, 6, 2, 6, 6, 4, 2, 4, 6, 2, 6, 4, 2, 4, 2, 10, 2, 10)
-  }
-
-  object SieveOfEratosthenes {
-    def apply(wheel: Wheel = Wheel(2, 1), firstPrime: Int = 2) = new SieveOfEratosthenes(wheel, firstPrime)
-
-    /**
-     * Iterator over prime numbers starting from 3
-     */
-    def sieveFrom3 = SieveOfEratosthenes(Wheel.wheel2, 3)
-
-    /**
-     * Iterator over prime numbers starting from 5
-     */
-    def sieveFrom5 = SieveOfEratosthenes(Wheel.wheel23, 5)
-
-    /**
-     * Iterator over prime numbers starting from 11
-     */
-    def sieveFrom11 = SieveOfEratosthenes(Wheel.wheel2357, 11)
+    wheelRec(start, Stream.continually(0).flatMap(_ => steps))
   }
 
   /**
-   * Iterator over all prime numbers
+   * All integers >=3, skipping multiples of 2
    */
-  def primes = List(2, 3, 5, 7).view ++ SieveOfEratosthenes.sieveFrom11
+  val wheel2 = wheel(3, List(2))
+
+  /**
+   * All integers >=5, skipping multiples of 2 and 3
+   */
+  val wheel23 = wheel(5, List(2, 4))
+
+  /**
+   * All integers >=11, skipping multiples of 2, 3, 5, and 7
+   */
+  val wheel2357 = wheel(11, List(2, 4, 2, 4, 6, 2, 6, 4, 2, 4, 6, 6, 2, 6, 4, 2, 6, 4, 6, 8, 4, 2, 4, 2, 4, 8, 6, 4, 6,
+    2, 4, 6, 2, 6, 6, 4, 2, 4, 6, 2, 6, 4, 2, 4, 2, 10, 2, 10))
 
   def primesPerSecond(n: Int, reps: Int = 10) = {
     object Timer extends {} with Benchmark {
       def run() {
-        primes.take(n).force
+        primes().take(n).force
       }
     }
     1000 * n / (Timer.runBenchmark(reps).sum.toDouble / reps)
