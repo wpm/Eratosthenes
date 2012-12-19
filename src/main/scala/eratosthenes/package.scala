@@ -1,6 +1,7 @@
 
 import collection.immutable.StreamView
 import collection.mutable
+import testing.Benchmark
 
 package object eratosthenes {
 
@@ -123,4 +124,21 @@ package object eratosthenes {
    */
   def primes = List(2, 3, 5, 7).view ++ SieveOfEratosthenes.sieveFrom11
 
+  def primesPerSecond(n: Int, reps: Int = 10) = {
+    object Timer extends {} with Benchmark {
+      def run() {
+        primes.take(n).force
+      }
+    }
+    1000 * n / (Timer.runBenchmark(reps).sum.toDouble / reps)
+  }
+
+  def main(args: Array[String]) {
+    val n = args(0).toInt
+    val reps = args(1).toInt
+    // Repeat the test a few times because the first run is
+    // always an order of magnitude slower for reasons I don't understand.
+    for (_ <- (1 to 5))
+      println(primesPerSecond(n, reps).toInt + " primes/sec")
+  }
 }
